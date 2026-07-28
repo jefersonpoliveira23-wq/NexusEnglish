@@ -283,6 +283,7 @@
     <button id="tab-mapamental" onclick="switchTab('mapamental')">🧠 Mapa Mental</button>
     <button id="tab-dashboard" onclick="switchTab('dashboard')">📊 Dashboard</button>
     <button id="tab-conta" onclick="switchTab('conta')">👤 Conta</button>
+    <button id="tab-aprovacoes" class="hidden" onclick="switchTab('aprovacoes')">✅ Aprovações</button>
   </div>
 </nav>
 
@@ -350,6 +351,15 @@
     </header>
     <p class="sub">Sua conta gratuita, usada para entrar no curso. O progresso (curso, flashcards, mapa mental e dashboard) acompanha você em qualquer aparelho — celular, PC etc.</p>
     <div id="contaRoot"><p class="pt" style="text-align:center;padding:30px 0">Carregando…</p></div>
+  </div>
+
+  <!-- ================= ABA: APROVAÇÕES (só visível para o e-mail admin) ================= -->
+  <div id="view-aprovacoes" class="hidden">
+    <header class="top">
+      <h1>✅ Aprovações</h1>
+    </header>
+    <p class="sub">Cadastros novos que ainda não têm acesso liberado ao curso. Aprove ou recuse cada um abaixo.</p>
+    <div id="approvalsRoot"><p class="pt" style="text-align:center;padding:30px 0">Carregando…</p></div>
   </div>
 
   <footer>
@@ -424,7 +434,7 @@ function speakReading(id){
 }
 
 /* ---------- Navegação entre abas da plataforma ---------- */
-const TABS = ['curso','flashcards','mapamental','dashboard','conta'];
+const TABS = ['curso','flashcards','mapamental','dashboard','conta','aprovacoes'];
 function switchTab(tab){
   TABS.forEach(t=>{
     document.getElementById('view-'+t).classList.toggle('hidden', t!==tab);
@@ -435,6 +445,7 @@ function switchTab(tab){
   if(tab==='mapamental') drawMindMap(); // (re)desenha a aba de mapa mental
   if(tab==='dashboard') drawDashboard(); // (re)desenha a aba de dashboard
   if(tab==='conta') drawAccount(); // (re)desenha a aba de conta/login
+  if(tab==='aprovacoes') drawApprovals(); // (re)desenha a aba de aprovações (só admin)
   window.scrollTo(0,0);
 }
 
@@ -1279,7 +1290,15 @@ function drawDashboard(){
    sem internet ou CDN bloqueado), o acesso ao curso é BLOQUEADO
    e uma mensagem pede para verificar a conexão, pois não há como
    validar login/senha nesse caso.
+
+   Cadastros novos ficam pendentes de aprovação: ao criar conta,
+   o documento no Firestore recebe approved:false e a pessoa vê uma
+   tela de "aguardando aprovação" em vez do curso. O e-mail admin
+   (ADMIN_EMAIL) vê uma aba extra "Aprovações" para liberar ou
+   recusar cada pedido — só ele tem permissão (regra do Firestore)
+   de ler/alterar o documento de outras contas.
    ========================================================= */
+const ADMIN_EMAIL = 'jefersonp.oliveira23@gmail.com';
 const firebaseConfig = {
   apiKey: "AIzaSyD8fBNMB4f3Y2aVnOsLq8JfN241fHDfepM",
   authDomain: "curso-ingles-a1.firebaseapp.com",
@@ -1316,12 +1335,16 @@ const AUTH_ERROR_MSG = {
 };
 function authErrorMessage(e){ return AUTH_ERROR_MSG[e && e.code] || (e && e.message) || 'Erro desconhecido.'; }
 
-/* ---------- Núcleo de autenticação (usado pela capa de login E pela aba Conta) ---------- */
+/* ---------- Núcleo de autenticação (usado pela capa de login E pela aba Conta) ----------
+   justSignedUp marca que a próxima vez que onAuthStateChanged disparar é fruto de um
+   CADASTRO novo (não um login normal) — só nesse momento gravamos approved:false. */
+let justSignedUp = false;
 function doSignUp(email, pass){
   if(!fbReady){ alert('Sincronização indisponível no momento.'); return; }
   if(!email || !pass){ alert('Preencha e-mail e senha.'); return; }
+  justSignedUp = true;
   fbAuth.createUserWithEmailAndPassword(email, pass)
-    .catch(e=> alert('Não foi possível criar a conta: ' + authErrorMessage(e)));
+    .catch(e=>{ justSignedUp = false; alert('Não foi possível criar a conta: ' + authErrorMessage(e)); });
 }
 function doSignIn(email, pass){
   if(!fbReady){ alert('Sincronização indisponível no momento.'); return; }
@@ -1387,6 +1410,38 @@ function drawGateError(){
     <button class="btn" onclick="location.reload()">🔄 Tentar novamente</button>
   `;
 }
+/* Mostrado quando a conta existe mas ainda não foi aprovada (ou foi recusada) pelo admin */
+function drawGatePending(email, rejected){
+  const card = document.getElementById('gateCard');
+  if(!card) return;
+  card.innerHTML = rejected ? `
+    <h1>🎓 Curso de Inglês</h1>
+    <p class="sub" style="color:var(--bad)">🚫 O acesso para <b>${email}</b> não foi liberado.</p>
+    <button class="btn ghost" onclick="accountSignOut()">Sair</button>
+  ` : `
+    <h1>🎓 Curso de Inglês</h1>
+    <p class="sub">⏳ Seu cadastro (<b>${email}</b>) foi criado e está aguardando aprovação. Assim que for liberado, você poderá entrar normalmente — tente de novo em alguns instantes.</p>
+    <button class="btn" onclick="location.reload()">🔄 Verificar novamente</button>
+    <button class="btn ghost" onclick="accountSignOut()">Sair</button>
+  `;
+}
+/* Mostra/esconde a aba "Aprovações" do menu — só para o e-mail admin */
+function updateAdminUI(){
+  const btn = document.getElementById('tab-aprovacoes');
+  if(!btn) return;
+  btn.classList.toggle('hidden', !(currentUser && currentUser.email === ADMIN_EMAIL));
+}
+/* Lê o documento do usuário e decide se o acesso está liberado.
+   admin sempre liberado; approved:false ou 'rejected' bloqueia; ausência do
+   campo (contas criadas antes dessa função existir) conta como liberado. */
+function checkApproval(uid, email){
+  return fbDb.collection('users').doc(uid).get().then(function(snap){
+    const data = snap.exists ? snap.data() : null;
+    const rejected = !!data && data.approved === 'rejected';
+    const blocked = !!data && (data.approved === false || rejected);
+    return { exists: snap.exists, data: data, approved: (email===ADMIN_EMAIL) || !blocked, rejected: rejected };
+  });
+}
 showGate(); // trava o acesso até o Firebase confirmar se há (ou não) um usuário logado
 
 /* Junta os pedaços de progresso guardados no localStorage num único objeto */
@@ -1419,6 +1474,7 @@ function refreshOpenTab(){
   if(cur==='mapamental') drawMindMap();
   if(cur==='dashboard') drawDashboard();
   if(cur==='conta') drawAccount();
+  if(cur==='aprovacoes') drawApprovals();
 }
 
 function pushToCloud(){
@@ -1444,16 +1500,50 @@ function pullFromCloud(uid){
 if(fbReady){
   fbAuth.onAuthStateChanged(function(user){
     currentUser = user;
+    updateAdminUI();
     if(user){
-      hideGate();
-      syncStatus = 'syncing'; drawAccount();
-      pullFromCloud(user.uid).then(function(hadCloud){
-        if(!hadCloud) pushToCloud(); // primeiro login: sobe o progresso que já existia neste aparelho
-        syncStatus = 'synced'; lastSyncAt = new Date();
-        refreshOpenTab();
+      checkApproval(user.uid, user.email).then(function(info){
+        /* Acabou de se cadastrar agora mesmo (não é um login normal): grava
+           approved:false no documento novo, exceto se for o e-mail admin. */
+        if(justSignedUp){
+          justSignedUp = false;
+          if(user.email !== ADMIN_EMAIL && !info.exists){
+            fbDb.collection('users').doc(user.uid).set({
+              approved: false,
+              email: user.email,
+              requestedAt: new Date().toISOString()
+            }, {merge:true});
+            info.approved = false;
+            info.rejected = false;
+          }
+        }
+        if(!info.approved){
+          syncStatus = 'offline';
+          drawGatePending(user.email, info.rejected);
+          showGate();
+          drawAccount();
+          return;
+        }
+        hideGate();
+        syncStatus = 'syncing'; drawAccount();
+        pullFromCloud(user.uid).then(function(hadCloud){
+          if(!hadCloud) pushToCloud(); // primeiro login: sobe o progresso que já existia neste aparelho
+          syncStatus = 'synced'; lastSyncAt = new Date();
+          refreshOpenTab();
+        }).catch(function(e){
+          syncStatus = 'error'; console.error('Erro ao puxar da nuvem', e);
+          refreshOpenTab();
+        });
       }).catch(function(e){
-        syncStatus = 'error'; console.error('Erro ao puxar da nuvem', e);
-        refreshOpenTab();
+        /* Erro ao checar aprovação (ex.: regra do Firestore ainda propagando): não
+           trava quem já tinha acesso — mostra o app e tenta sincronizar mesmo assim. */
+        console.error('Erro ao checar aprovação', e);
+        hideGate();
+        syncStatus = 'error'; drawAccount();
+        pullFromCloud(user.uid).then(function(hadCloud){
+          if(!hadCloud) pushToCloud();
+          refreshOpenTab();
+        }).catch(function(){ refreshOpenTab(); });
       });
     } else {
       syncStatus = 'offline';
@@ -1502,6 +1592,50 @@ function drawAccount(){
     </div>
     <div class="lock-note">☁️ Seu progresso é sincronizado nesta conta e acompanha você em qualquer aparelho — celular, PC etc. — com o mesmo e-mail e senha.</div>`;
   }
+}
+
+/* ---------- Aba Aprovações: só o e-mail admin consegue ler/alterar (regra do Firestore) ---------- */
+function drawApprovals(){
+  const root = document.getElementById('approvalsRoot');
+  if(!root) return;
+  if(!fbReady || !currentUser || currentUser.email !== ADMIN_EMAIL){
+    root.innerHTML = `<div class="card"><p class="pt" style="margin:0">Esta aba é restrita.</p></div>`;
+    return;
+  }
+  root.innerHTML = '<p class="pt" style="text-align:center;padding:30px 0">Carregando…</p>';
+  fbDb.collection('users').where('approved','==',false).get().then(function(snap){
+    if(snap.empty){
+      root.innerHTML = `<div class="card"><p class="pt" style="margin:0">🎉 Nenhum cadastro pendente no momento.</p></div>`;
+      return;
+    }
+    let h = '';
+    snap.forEach(function(doc){
+      const d = doc.data() || {};
+      const when = d.requestedAt ? new Date(d.requestedAt).toLocaleString('pt-BR') : '—';
+      h += `<div class="card" style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap">
+        <div>
+          <p style="margin:0;font-weight:700">${d.email || '(sem e-mail salvo)'}</p>
+          <p class="pt" style="margin:2px 0 0;font-size:12.5px">Pedido em ${when}</p>
+        </div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <button class="btn" onclick="approveUser('${doc.id}')">✅ Aprovar</button>
+          <button class="btn ghost" onclick="rejectUser('${doc.id}')">🚫 Recusar</button>
+        </div>
+      </div>`;
+    });
+    root.innerHTML = h;
+  }).catch(function(e){
+    root.innerHTML = `<div class="card"><p class="pt" style="color:var(--bad)">Erro ao carregar aprovações: ${authErrorMessage(e)}</p></div>`;
+  });
+}
+function approveUser(uid){
+  if(!fbReady || !currentUser || currentUser.email !== ADMIN_EMAIL) return;
+  fbDb.collection('users').doc(uid).set({approved:true}, {merge:true}).then(drawApprovals);
+}
+function rejectUser(uid){
+  if(!fbReady || !currentUser || currentUser.email !== ADMIN_EMAIL) return;
+  if(!confirm('Recusar este cadastro? A pessoa verá uma mensagem de acesso negado ao tentar entrar.')) return;
+  fbDb.collection('users').doc(uid).set({approved:'rejected'}, {merge:true}).then(drawApprovals);
 }
 
 /* ---------- Trilha dos próximos níveis (roadmap) ---------- */
