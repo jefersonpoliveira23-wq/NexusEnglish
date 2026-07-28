@@ -1367,6 +1367,8 @@ function accountSignIn(){ doSignIn(fieldVal('acctEmail'), (document.getElementBy
 function accountResetPassword(){ doResetPassword(fieldVal('acctEmail')); }
 function accountSignOut(){
   if(!fbReady) return;
+  clearLocalCourseData(); // este aparelho não deve manter o progresso de quem acabou de sair
+  localStorage.removeItem('authUid');
   fbAuth.signOut();
 }
 
@@ -1444,6 +1446,12 @@ function checkApproval(uid, email){
 }
 showGate(); // trava o acesso até o Firebase confirmar se há (ou não) um usuário logado
 
+/* Chaves de progresso guardadas neste aparelho — usadas pra não misturar o
+   progresso de contas diferentes quando mais de uma pessoa usa o mesmo aparelho. */
+const LOCAL_DATA_KEYS = ['cursoA1','flashProgress','myCards','flashDaily','activityLog'];
+function clearLocalCourseData(){
+  LOCAL_DATA_KEYS.forEach(function(k){ localStorage.removeItem(k); });
+}
 /* Junta os pedaços de progresso guardados no localStorage num único objeto */
 function collectLocalState(){
   return {
@@ -1524,10 +1532,16 @@ if(fbReady){
           drawAccount();
           return;
         }
+        /* Este aparelho pode ter ficado com o progresso de OUTRA conta (ex.: alguém
+           trocou de login sem sair primeiro) — nesse caso limpa antes de sincronizar,
+           pra não enviar/misturar dados de uma pessoa na conta de outra. */
+        const lastUid = localStorage.getItem('authUid');
+        if(lastUid && lastUid !== user.uid) clearLocalCourseData();
+        localStorage.setItem('authUid', user.uid);
         hideGate();
         syncStatus = 'syncing'; drawAccount();
         pullFromCloud(user.uid).then(function(hadCloud){
-          if(!hadCloud) pushToCloud(); // primeiro login: sobe o progresso que já existia neste aparelho
+          if(!hadCloud) pushToCloud(); // primeiro login desta conta: sobe o progresso local (já garantido só dela)
           syncStatus = 'synced'; lastSyncAt = new Date();
           refreshOpenTab();
         }).catch(function(e){
@@ -1538,6 +1552,9 @@ if(fbReady){
         /* Erro ao checar aprovação (ex.: regra do Firestore ainda propagando): não
            trava quem já tinha acesso — mostra o app e tenta sincronizar mesmo assim. */
         console.error('Erro ao checar aprovação', e);
+        const lastUid2 = localStorage.getItem('authUid');
+        if(lastUid2 && lastUid2 !== user.uid) clearLocalCourseData();
+        localStorage.setItem('authUid', user.uid);
         hideGate();
         syncStatus = 'error'; drawAccount();
         pullFromCloud(user.uid).then(function(hadCloud){
