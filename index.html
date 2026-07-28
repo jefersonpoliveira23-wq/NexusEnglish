@@ -358,7 +358,7 @@
     <header class="top">
       <h1>✅ Aprovações</h1>
     </header>
-    <p class="sub">Cadastros novos que ainda não têm acesso liberado ao curso. Aprove ou recuse cada um abaixo.</p>
+    <p class="sub">Todos os usuários cadastrados, com status e último login. Aprove ou recuse pendentes; revogue o acesso de quem já está aprovado. Para excluir uma conta por completo, ainda é preciso usar o Console do Firebase.</p>
     <div id="approvalsRoot"><p class="pt" style="text-align:center;padding:30px 0">Carregando…</p></div>
   </div>
 
@@ -1538,6 +1538,13 @@ if(fbReady){
         const lastUid = localStorage.getItem('authUid');
         if(lastUid && lastUid !== user.uid) clearLocalCourseData();
         localStorage.setItem('authUid', user.uid);
+        /* Registra e-mail + horário deste login no próprio documento — é o que
+           alimenta a lista "último login" da aba Aprovações (cada um só grava o
+           próprio, a regra do Firestore não permite escrever no documento alheio). */
+        fbDb.collection('users').doc(user.uid).set({
+          email: user.email,
+          lastLoginAt: new Date().toISOString()
+        }, {merge:true});
         hideGate();
         syncStatus = 'syncing'; drawAccount();
         pullFromCloud(user.uid).then(function(hadCloud){
@@ -1611,7 +1618,13 @@ function drawAccount(){
   }
 }
 
-/* ---------- Aba Aprovações: só o e-mail admin consegue ler/alterar (regra do Firestore) ---------- */
+/* ---------- Aba Aprovações: lista TODOS os usuários (pendente/aprovado/recusado),
+   com último login. Só o e-mail admin consegue ler/alterar (regra do Firestore). ---------- */
+function approvalStatusInfo(status){
+  if(status === false) return {label:'⏳ Pendente', color:'var(--warn)', rank:0};
+  if(status === 'rejected') return {label:'🚫 Recusado', color:'var(--bad)', rank:2};
+  return {label:'✅ Aprovado', color:'var(--ok)', rank:1}; // true ou campo ausente (contas antigas)
+}
 function drawApprovals(){
   const root = document.getElementById('approvalsRoot');
   if(!root) return;
@@ -1620,29 +1633,53 @@ function drawApprovals(){
     return;
   }
   root.innerHTML = '<p class="pt" style="text-align:center;padding:30px 0">Carregando…</p>';
-  fbDb.collection('users').where('approved','==',false).get().then(function(snap){
-    if(snap.empty){
-      root.innerHTML = `<div class="card"><p class="pt" style="margin:0">🎉 Nenhum cadastro pendente no momento.</p></div>`;
+  fbDb.collection('users').get().then(function(snap){
+    const rows = [];
+    snap.forEach(function(doc){
+      if(doc.id === currentUser.uid) return; // não lista a própria conta admin
+      const d = doc.data() || {};
+      rows.push({
+        id: doc.id,
+        email: d.email || '(e-mail não registrado — conta antiga)',
+        status: d.approved,
+        lastLoginAt: d.lastLoginAt || null,
+        requestedAt: d.requestedAt || null
+      });
+    });
+    if(rows.length === 0){
+      root.innerHTML = `<div class="card"><p class="pt" style="margin:0">Nenhum outro usuário cadastrado ainda.</p></div>`;
       return;
     }
+    /* pendentes primeiro, depois aprovados, depois recusados; dentro de cada grupo, login mais recente primeiro */
+    rows.sort(function(a,b){
+      const ra = approvalStatusInfo(a.status).rank, rb = approvalStatusInfo(b.status).rank;
+      if(ra !== rb) return ra - rb;
+      return new Date(b.lastLoginAt || b.requestedAt || 0) - new Date(a.lastLoginAt || a.requestedAt || 0);
+    });
     let h = '';
-    snap.forEach(function(doc){
-      const d = doc.data() || {};
-      const when = d.requestedAt ? new Date(d.requestedAt).toLocaleString('pt-BR') : '—';
+    rows.forEach(function(r){
+      const info = approvalStatusInfo(r.status);
+      const lastLogin = r.lastLoginAt ? new Date(r.lastLoginAt).toLocaleString('pt-BR') : 'nunca entrou';
+      let actions;
+      if(r.status === false){
+        actions = `<button class="btn" onclick="approveUser('${r.id}')">✅ Aprovar</button>
+          <button class="btn ghost" onclick="rejectUser('${r.id}')">🚫 Recusar</button>`;
+      } else if(r.status === 'rejected'){
+        actions = `<button class="btn" onclick="approveUser('${r.id}')">✅ Aprovar</button>`;
+      } else {
+        actions = `<button class="btn ghost" onclick="revokeUser('${r.id}')">⛔ Revogar acesso</button>`;
+      }
       h += `<div class="card" style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap">
         <div>
-          <p style="margin:0;font-weight:700">${d.email || '(sem e-mail salvo)'}</p>
-          <p class="pt" style="margin:2px 0 0;font-size:12.5px">Pedido em ${when}</p>
+          <p style="margin:0;font-weight:700">${r.email}</p>
+          <p class="pt" style="margin:2px 0 0;font-size:12.5px"><span style="color:${info.color};font-weight:700">${info.label}</span> · último login: ${lastLogin}</p>
         </div>
-        <div style="display:flex;gap:8px;flex-wrap:wrap">
-          <button class="btn" onclick="approveUser('${doc.id}')">✅ Aprovar</button>
-          <button class="btn ghost" onclick="rejectUser('${doc.id}')">🚫 Recusar</button>
-        </div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">${actions}</div>
       </div>`;
     });
     root.innerHTML = h;
   }).catch(function(e){
-    root.innerHTML = `<div class="card"><p class="pt" style="color:var(--bad)">Erro ao carregar aprovações: ${authErrorMessage(e)}</p></div>`;
+    root.innerHTML = `<div class="card"><p class="pt" style="color:var(--bad)">Erro ao carregar usuários: ${authErrorMessage(e)}</p></div>`;
   });
 }
 function approveUser(uid){
@@ -1653,6 +1690,11 @@ function rejectUser(uid){
   if(!fbReady || !currentUser || currentUser.email !== ADMIN_EMAIL) return;
   if(!confirm('Recusar este cadastro? A pessoa verá uma mensagem de acesso negado ao tentar entrar.')) return;
   fbDb.collection('users').doc(uid).set({approved:'rejected'}, {merge:true}).then(drawApprovals);
+}
+function revokeUser(uid){
+  if(!fbReady || !currentUser || currentUser.email !== ADMIN_EMAIL) return;
+  if(!confirm('Revogar o acesso desta pessoa? Ela vai precisar ser aprovada de novo pra voltar a entrar no curso.')) return;
+  fbDb.collection('users').doc(uid).set({approved:false}, {merge:true}).then(drawApprovals);
 }
 
 /* ---------- Trilha dos próximos níveis (roadmap) ---------- */
