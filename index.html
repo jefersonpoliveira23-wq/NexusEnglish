@@ -174,6 +174,9 @@
   .my-card-item .cen{font-weight:700;color:#8fd6ff;font-size:14.5px}
   .my-card-item .cpt{color:var(--muted);font-size:13px;margin-top:2px}
   .my-card-item .acts{display:flex;gap:6px;flex:none}
+  .flash-hl{background:rgba(255,180,84,.18);color:var(--accent);font-weight:800;padding:1px 6px;border-radius:6px}
+  .my-card-preview{min-height:20px;font-size:14px;color:var(--muted);margin:8px 0 2px}
+  .my-card-preview b{color:var(--muted);font-weight:600}
   .icon-btn{background:var(--card2);border:1px solid var(--line);color:var(--muted);border-radius:8px;padding:6px 10px;cursor:pointer;font-size:13px}
   .icon-btn:hover{color:var(--txt);border-color:var(--brand)}
   .icon-btn.del:hover{color:var(--bad);border-color:var(--bad)}
@@ -488,6 +491,31 @@ function sm2Update(card, quality){
 /* ---------- Meus cartões (criados pelo usuário, salvos em localStorage) ---------- */
 function loadMyCards(){ try{return JSON.parse(localStorage.getItem('myCards')||'[]')}catch(e){return []} }
 function saveMyCards(list){ localStorage.setItem('myCards', JSON.stringify(list)); queueSync(); }
+
+/* ---------- Destaque de estrutura fixa nos flashcards ----------
+   Trecho entre **asteriscos duplos** vira destaque visual (ex: "My **life is** happy").
+   Puramente opcional: quem não usar ** não vê diferença nenhuma. */
+function escapeHtml(s){ return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+function stripFlashMarkup(s){ return (s||'').replace(/\*\*(.+?)\*\*/g, '$1'); }
+function renderFlashEn(s){ return escapeHtml(s).replace(/\*\*(.+?)\*\*/g, '<span class="flash-hl">$1</span>'); }
+function highlightSelection(){
+  const el = document.getElementById('myCardEn');
+  if(!el) return;
+  const start = el.selectionStart, end = el.selectionEnd;
+  if(start === end){ alert('Primeiro selecione (arraste o mouse sobre) o trecho que você quer destacar, depois clique em "Destacar trecho".'); return; }
+  const val = el.value;
+  el.value = val.slice(0, start) + '**' + val.slice(start, end) + '**' + val.slice(end);
+  el.focus();
+  el.setSelectionRange(end + 4, end + 4);
+  updateMyCardPreview();
+}
+function updateMyCardPreview(){
+  const el = document.getElementById('myCardEn');
+  const prev = document.getElementById('myCardEnPreview');
+  if(!el || !prev) return;
+  const v = el.value.trim();
+  prev.innerHTML = v ? ('<b>Pré-visualização:</b> ' + renderFlashEn(v)) : '';
+}
 
 function addMyCard(){
   const enEl = document.getElementById('myCardEn');
@@ -829,7 +857,12 @@ function drawFlash(justChecked){
       h += `<h2 class="section-title">${editing?'✏️ Editando cartão':'➕ Criar um novo cartão'}</h2>
       <div class="my-card-form">
         <label for="myCardEn">Frase em inglês</label>
-        <input id="myCardEn" placeholder="Ex: I'm running late for the meeting.">
+        <input id="myCardEn" placeholder="Ex: My life is good." oninput="updateMyCardPreview()">
+        <div style="margin-top:8px">
+          <button type="button" class="btn ghost" style="padding:7px 14px;font-size:13px" onclick="highlightSelection()">🖍️ Destacar trecho selecionado</button>
+        </div>
+        <div class="my-card-preview" id="myCardEnPreview"></div>
+        <p class="hint">Opcional: selecione com o mouse a parte da frase que é a estrutura fixa (ex: "life is") e clique em "Destacar trecho" — ela fica marcada em laranja para você lembrar que só o resto muda (My/Your/Our/Her life is...). Também dá pra digitar manualmente entre <code>**dois asteriscos**</code>.</p>
         <label for="myCardPt">Tradução em português</label>
         <input id="myCardPt" placeholder="Ex: Estou atrasado para a reunião.">
         <p class="hint">Dica: para aceitar mais de uma tradução como correta, separe com barra ( / ). Ex: estou atrasado / vou chegar atrasado</p>
@@ -843,7 +876,7 @@ function drawFlash(justChecked){
         h += `<h2 class="section-title">📋 Seus cartões (${myCards.length})</h2><div class="my-card-list">`;
         myCards.forEach(c=>{
           h += `<div class="my-card-item">
-            <div class="txt"><div class="cen">${c.en}</div><div class="cpt">${c.pt.join(' / ')}${c.note?` <span style="opacity:.7">(${c.note})</span>`:''}</div></div>
+            <div class="txt"><div class="cen">${renderFlashEn(c.en)}</div><div class="cpt">${c.pt.join(' / ')}${c.note?` <span style="opacity:.7">(${c.note})</span>`:''}</div></div>
             <div class="acts">
               <button class="icon-btn" onclick="editMyCard('${c.id}')" title="Editar">✏️</button>
               <button class="icon-btn del" onclick="deleteMyCard('${c.id}')" title="Excluir">🗑️</button>
@@ -862,6 +895,7 @@ function drawFlash(justChecked){
       if(c && enEl){ enEl.value = c.en; }
       if(c && ptEl){ ptEl.value = c.pt.join(' / '); }
     }
+    if(DECK==='meus') updateMyCardPreview();
     return;
   }
 
@@ -871,7 +905,7 @@ function drawFlash(justChecked){
     <div class="flash-card-box">
     ${flashPending[card.id]?`<div class="lock-note" style="margin-bottom:10px">🔁 Repetindo este cartão nesta sessão para reforçar a memorização.</div>`:''}
     ${card.origin?`<span class="flash-origin">${card.origin}</span><br>`:''}
-    <div class="flash-en">${card.en} ${audio(card.en.replace(/<[^>]*>/g,''))}</div>`;
+    <div class="flash-en">${renderFlashEn(card.en)} ${audio(stripFlashMarkup(card.en).replace(/<[^>]*>/g,''))}</div>`;
 
   if(!flashAnswered){
     h += `<input class="flash-input" id="flashInput" placeholder="Digite a tradução em português" onkeydown="if(event.key==='Enter') checkFlashAnswer()">
