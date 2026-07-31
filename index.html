@@ -204,6 +204,26 @@
   .dash-diff-bar{flex:1;height:14px;background:#2a2f4d;border-radius:20px;overflow:hidden}
   .dash-diff-bar>i{display:block;height:100%;border-radius:20px}
   .dash-diff-num{width:70px;flex:none;text-align:right;font-size:12.5px;color:var(--muted)}
+  .cal-head{display:flex;align-items:center;justify-content:center;gap:14px;margin-bottom:12px}
+  .cal-title{font-weight:700;font-size:14.5px;min-width:150px;text-align:center}
+  .cal-nav{background:var(--card2);border:1px solid var(--line);color:var(--txt);border-radius:8px;padding:5px 10px;cursor:pointer;font-size:13px}
+  .cal-nav:disabled{opacity:.3;cursor:not-allowed}
+  .cal-weekdays{display:grid;grid-template-columns:repeat(7,1fr);gap:6px;margin-bottom:8px;font-size:11px;color:var(--muted);text-align:center;font-weight:700}
+  .cal-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:6px;margin-bottom:4px}
+  .cal-day{aspect-ratio:1;display:flex;align-items:center;justify-content:center;border-radius:8px;font-size:12px;font-weight:700;background:#232849;color:var(--muted)}
+  .cal-day.empty{background:transparent}
+  .cal-day.future{opacity:.35}
+  .cal-day.today{outline:2px solid var(--accent);outline-offset:1px}
+  .cal-day.l1{background:rgba(91,140,255,.28);color:#dbe6ff}
+  .cal-day.l2{background:rgba(91,140,255,.55);color:#fff}
+  .cal-day.l3{background:rgba(91,140,255,.8);color:#fff}
+  .cal-day.l4{background:var(--brand);color:#fff}
+  .cal-legend{display:flex;align-items:center;gap:6px;justify-content:flex-end;margin-top:10px;font-size:11px;color:var(--muted)}
+  .cal-legend i{display:inline-block;width:12px;height:12px;border-radius:4px;background:#232849}
+  .cal-legend i.l1{background:rgba(91,140,255,.28)}
+  .cal-legend i.l2{background:rgba(91,140,255,.55)}
+  .cal-legend i.l3{background:rgba(91,140,255,.8)}
+  .cal-legend i.l4{background:var(--brand)}
   .dash-empty{text-align:center;padding:30px 20px;color:var(--muted)}
 
   /* ---------- MAPA MENTAL ---------- */
@@ -791,8 +811,10 @@ function toggleFlashReveal(){
   flashRevealed = !flashRevealed;
   const el = document.getElementById('flashEnText');
   const btn = document.getElementById('flashEyeBtn');
+  const hint = document.getElementById('listenHint');
   if(el) el.classList.toggle('revealed', flashRevealed);
   if(btn) btn.textContent = flashRevealed ? '🙈' : '👁️';
+  if(hint) hint.style.display = flashRevealed ? 'none' : '';
 }
 
 /* ---------- HTML da aba Flashcards ---------- */
@@ -929,7 +951,7 @@ function drawFlash(justChecked){
     </div>`;
 
   if(!flashAnswered){
-    if(!flashRevealed) h += `<p class="listen-hint">🎧 Ouça o áudio e tente digitar de ouvido — toque no 👁️ se quiser ver a frase.</p>`;
+    h += `<p class="listen-hint" id="listenHint"${flashRevealed?' style="display:none"':''}>🎧 Ouça o áudio e tente digitar de ouvido — toque no 👁️ se quiser ver a frase.</p>`;
     h += `<input class="flash-input" id="flashInput" placeholder="Digite a tradução em português" onkeydown="if(event.key==='Enter') checkFlashAnswer()">
       <button class="btn big" onclick="checkFlashAnswer()">Verificar</button>`;
   } else {
@@ -1213,6 +1235,68 @@ function activityTotals(){
   return totals;
 }
 
+/* ---------- Média de minutos nos últimos 30 dias em que houve estudo de fato ----------
+   Diferente de uma média de calendário (que dilui com dias zerados), aqui pegamos
+   só os dias com minutes>0, os 30 mais recentes, e tiramos a média entre eles. */
+function last30StudiedDaysAvg(){
+  const log = loadActivity();
+  const studiedDays = Object.keys(log)
+    .filter(k => (log[k].minutes||0) > 0)
+    .sort((a,b)=> b.localeCompare(a))
+    .slice(0, 30);
+  if(studiedDays.length === 0) return {avg:0, count:0};
+  const total = studiedDays.reduce((s,k)=> s + (log[k].minutes||0), 0);
+  return {avg: Math.round(total/studiedDays.length), count: studiedDays.length};
+}
+
+/* ---------- Calendário mensal de estudo (aba Conta) ----------
+   calendarMonthOffset: 0 = mês atual, -1 = mês anterior, etc. Nunca deixa ir pro futuro. */
+let calendarMonthOffset = 0;
+function shiftCalendarMonth(delta){
+  calendarMonthOffset = Math.min(0, calendarMonthOffset + delta);
+  drawAccount();
+}
+function minutesLevel(mins){
+  if(mins <= 0) return 0;
+  if(mins < 15) return 1;
+  if(mins < 30) return 2;
+  if(mins < 60) return 3;
+  return 4;
+}
+function studyCalendarHTML(){
+  const pad = n => String(n).padStart(2,'0');
+  const base = new Date();
+  base.setDate(1);
+  base.setMonth(base.getMonth() + calendarMonthOffset);
+  const year = base.getFullYear(), month = base.getMonth(); // 0-indexado
+  const daysInMonth = new Date(year, month+1, 0).getDate();
+  const firstWeekday = new Date(year, month, 1).getDay(); // 0=Domingo
+  const log = loadActivity();
+  const todayKey = todayStr();
+  const monthNames = ['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
+
+  let cells = '';
+  for(let i=0;i<firstWeekday;i++) cells += `<div class="cal-day empty"></div>`;
+  for(let day=1; day<=daysInMonth; day++){
+    const key = `${year}-${pad(month+1)}-${pad(day)}`;
+    const mins = (log[key] && log[key].minutes) || 0;
+    const level = minutesLevel(mins);
+    const cls = ['cal-day', 'l'+level, key===todayKey?'today':'', key>todayKey?'future':''].filter(Boolean).join(' ');
+    cells += `<div class="${cls}" title="${pad(day)}/${pad(month+1)}: ${mins} minuto(s) estudado(s)">${day}</div>`;
+  }
+
+  return `<div class="cal-head">
+      <button class="cal-nav" onclick="shiftCalendarMonth(-1)">◀</button>
+      <span class="cal-title">${monthNames[month]} de ${year}</span>
+      <button class="cal-nav" onclick="shiftCalendarMonth(1)" ${calendarMonthOffset===0?'disabled':''}>▶</button>
+    </div>
+    <div class="cal-weekdays"><div>D</div><div>S</div><div>T</div><div>Q</div><div>Q</div><div>S</div><div>S</div></div>
+    <div class="cal-grid">${cells}</div>
+    <div class="cal-legend">Menos
+      <i class="l1"></i><i class="l2"></i><i class="l3"></i><i class="l4"></i>
+    Mais</div>`;
+}
+
 /* ---------- Últimos N dias, sempre preenchidos (mesmo sem atividade) ---------- */
 function lastNDays(n){
   const log = loadActivity();
@@ -1425,6 +1509,7 @@ function accountSignOut(){
   if(!fbReady) return;
   clearLocalCourseData(); // este aparelho não deve manter o progresso de quem acabou de sair
   localStorage.removeItem('authUid');
+  calendarMonthOffset = 0; // reseta a navegação do calendário pro próximo login
   fbAuth.signOut();
 }
 
@@ -1650,13 +1735,23 @@ function drawAccount(){
   }
   if(currentUser){
     const statusLabel = {syncing:'🔄 Sincronizando...', synced:'✅ Sincronizado', error:'⚠️ Erro ao sincronizar (tentando de novo)', offline:'—'}[syncStatus] || '';
+    const streak = currentStreak();
+    const avg30 = last30StudiedDaysAvg();
     root.innerHTML = `<div class="card">
       <p class="pt" style="margin:0 0 4px">Logado como</p>
       <p style="margin:0 0 14px;font-weight:700;font-size:16px">${currentUser.email}</p>
       <p class="pt" style="margin:0 0 16px">${statusLabel}${lastSyncAt ? ' · última sincronização ' + lastSyncAt.toLocaleTimeString('pt-BR') : ''}</p>
       <button class="btn ghost" onclick="accountSignOut()">Sair</button>
     </div>
-    <div class="lock-note">🔄 Seu progresso (curso, flashcards, mapa mental e dashboard) é salvo automaticamente nesta conta. Entre com o mesmo e-mail e senha em qualquer outro aparelho para continuar de onde parou.</div>`;
+    <div class="lock-note">🔄 Seu progresso (curso, flashcards, mapa mental e dashboard) é salvo automaticamente nesta conta. Entre com o mesmo e-mail e senha em qualquer outro aparelho para continuar de onde parou.</div>
+    <div class="dash-stats">
+      <div class="flash-stat"><div class="num">🔥 ${streak}</div><div class="lbl">dia(s) seguidos estudando</div></div>
+      <div class="flash-stat"><div class="num">${avg30.count ? avg30.avg : '—'}</div><div class="lbl">média de min/dia${avg30.count ? ` (últimos ${avg30.count} dia${avg30.count>1?'s':''} estudado${avg30.count>1?'s':''})` : ' (sem dados ainda)'}</div></div>
+    </div>
+    <div class="dash-card">
+      <h2>📅 Calendário de estudo</h2>
+      <div id="studyCalendar">${studyCalendarHTML()}</div>
+    </div>`;
   } else {
     root.innerHTML = `<div class="my-card-form">
       <p class="pt" style="margin:0 0 14px">Crie uma conta ou entre para o seu progresso acompanhar você em qualquer aparelho (celular, PC etc).</p>
