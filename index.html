@@ -128,6 +128,7 @@
   .reading-count{font-size:12px;font-weight:800;background:var(--card);color:var(--accent);padding:3px 10px;border-radius:20px;white-space:nowrap}
   .reading-phase.done .reading-count{color:var(--ok)}
   .reading-text{white-space:pre-line;font-size:15px;line-height:1.75;color:var(--txt);background:var(--card);border-radius:10px;padding:12px 14px;margin-bottom:10px}
+  .reading-comic{width:100%;max-width:420px;display:block;margin:0 auto 14px;border-radius:14px;box-shadow:0 10px 28px rgba(0,0,0,.45)}
   .reading-text.pt-text{color:var(--muted);font-style:italic}
   .reading-label{font-size:11px;font-weight:800;letter-spacing:.5px;color:var(--brand);text-transform:uppercase;margin:0 0 4px}
   .reading-line{margin-bottom:12px}
@@ -1923,6 +1924,7 @@ function readingHTML(m){
 
   h += `<div class="reading-phase${done[0]?' done':''}">
     <div class="reading-phase-head"><b>1. Leia em voz alta — só em inglês</b><span class="reading-count">${Math.min(rp.r1,5)}/5</span></div>
+    ${m.reading.image?`<img class="reading-comic" src="${m.reading.image}" alt="Quadrinho ilustrado: ${m.reading.title}" loading="lazy">`:''}
     <p class="reading-label">English</p>
     <div class="reading-text">${m.reading.en}</div>
     ${done[0]?'':`<button class="btn ghost" onclick="markReadingRep('${m.id}',1)">Li mais uma vez ✓</button>`}
@@ -2130,6 +2132,7 @@ const COURSE = { modules: [
  id:'m1', title:'Módulo 1 — Verbo "to be" e apresentações',
  objetivo:'Dominar o verbo "to be" (ser/estar) em profundidade — afirmativa, negativa, interrogativa e contrações — e usá-lo para se apresentar.',
  reading:{title:'A história de Sofia — Capítulo 1: Chegando em Boston',
+  image:'imagens/leitura/m1.jpg',
   en:`Hi! My name is Sofia, and I am from Brazil.
 Today is my first day in Boston.
 A young woman opens the door. "Hi, I'm Emma. Are you Sofia?"
