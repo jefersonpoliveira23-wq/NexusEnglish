@@ -142,7 +142,11 @@
   .flash-stat .lbl{font-size:12.5px;color:var(--muted);margin-top:2px}
   .flash-card-box{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:28px 24px;max-width:520px;margin:0 auto;text-align:center}
   .flash-progress{font-size:12px;color:var(--muted);margin-bottom:14px;font-weight:700;letter-spacing:.3px}
-  .flash-en{font-size:22px;font-weight:700;margin:10px 0 18px;color:var(--txt)}
+  .flash-en{font-size:22px;font-weight:700;margin:10px 0 18px;color:var(--txt);display:flex;align-items:center;justify-content:center;gap:8px;flex-wrap:wrap}
+  .flash-en-text{filter:blur(9px);transition:filter .2s;user-select:none;cursor:default}
+  .flash-en-text.revealed{filter:none;user-select:text}
+  .eye-btn{font-size:16px;padding:5px 9px;line-height:1}
+  .listen-hint{font-size:12.5px;color:var(--muted);margin:-10px 0 14px}
   .flash-origin{display:inline-block;font-size:11px;font-weight:800;background:var(--card2);color:var(--accent);padding:3px 10px;border-radius:20px;margin-bottom:10px}
   .flash-input{width:100%;padding:12px 14px;border-radius:10px;border:1px solid var(--line);background:var(--card2);color:var(--txt);font-size:16px;margin:10px 0;text-align:center}
   .flash-input:focus{outline:none;border-color:var(--brand)}
@@ -684,6 +688,7 @@ let flashQueue = [];
 let flashIdx = 0;
 let flashAnswered = false;
 let flashLastCorrect = false; // se a última tradução digitada bateu com a aceita
+let flashRevealed = false; // treino de listening: frase começa borrada até revelar (ou até verificar a resposta)
 let flashStats = {seen:0, correct:0};
 let editingCardId = null;
 let flashExtra = false; // true = sessão de prática extra, fora da cota diária
@@ -717,6 +722,7 @@ function startFlashSession(){
   flashQueue = buildSessionQueue(dailyLeft(DECK));
   flashIdx = 0;
   flashAnswered = false;
+  flashRevealed = false;
   flashStats = {seen:0, correct:0};
   flashExtra = false;
   flashPending = {};
@@ -727,6 +733,7 @@ function startFlashExtra(){
   flashQueue = shuffle(deckCards().slice());
   flashIdx = 0;
   flashAnswered = false;
+  flashRevealed = false;
   flashStats = {seen:0, correct:0};
   flashExtra = true;
   flashPending = {};
@@ -744,6 +751,7 @@ function checkFlashAnswer(){
   const correct = accepted.indexOf(given) !== -1;
   flashAnswered = true;
   flashLastCorrect = correct;
+  flashRevealed = true; // ao verificar, a frase sempre aparece — sem sentido continuar borrada na correção
   flashStats.seen++;
   if(correct) flashStats.correct++;
   logReview(correct); // alimenta o dashboard (taxa de acerto e gráfico de evolução)
@@ -775,7 +783,16 @@ function rateFlashCard(quality){
 
   flashIdx++;
   flashAnswered = false;
+  flashRevealed = false; // próximo cartão começa borrado de novo (treino de listening)
   drawFlash();
+}
+
+function toggleFlashReveal(){
+  flashRevealed = !flashRevealed;
+  const el = document.getElementById('flashEnText');
+  const btn = document.getElementById('flashEyeBtn');
+  if(el) el.classList.toggle('revealed', flashRevealed);
+  if(btn) btn.textContent = flashRevealed ? '🙈' : '👁️';
 }
 
 /* ---------- HTML da aba Flashcards ---------- */
@@ -905,9 +922,14 @@ function drawFlash(justChecked){
     <div class="flash-card-box">
     ${flashPending[card.id]?`<div class="lock-note" style="margin-bottom:10px">🔁 Repetindo este cartão nesta sessão para reforçar a memorização.</div>`:''}
     ${card.origin?`<span class="flash-origin">${card.origin}</span><br>`:''}
-    <div class="flash-en">${renderFlashEn(card.en)} ${audio(stripFlashMarkup(card.en).replace(/<[^>]*>/g,''))}</div>`;
+    <div class="flash-en">
+      <span class="flash-en-text${flashRevealed?' revealed':''}" id="flashEnText">${renderFlashEn(card.en)}</span>
+      <button class="icon-btn eye-btn" id="flashEyeBtn" onclick="toggleFlashReveal()" title="Mostrar/ocultar frase">${flashRevealed?'🙈':'👁️'}</button>
+      ${audio(stripFlashMarkup(card.en).replace(/<[^>]*>/g,''))}
+    </div>`;
 
   if(!flashAnswered){
+    if(!flashRevealed) h += `<p class="listen-hint">🎧 Ouça o áudio e tente digitar de ouvido — toque no 👁️ se quiser ver a frase.</p>`;
     h += `<input class="flash-input" id="flashInput" placeholder="Digite a tradução em português" onkeydown="if(event.key==='Enter') checkFlashAnswer()">
       <button class="btn big" onclick="checkFlashAnswer()">Verificar</button>`;
   } else {
